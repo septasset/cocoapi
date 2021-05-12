@@ -145,7 +145,7 @@ class COCOeval:
             computeIoU = self.computeIoU
         elif p.iouType == 'keypoints':
             computeIoU = self.computeOks
-        self.ious = {(imgId, catId): computeIoU(imgId, catId) \
+        self.ious = {(imgId, catId): computeIoU(imgId, catId, flag = False) \
                         for imgId in p.imgIds
                         for catId in catIds}
 
@@ -189,11 +189,24 @@ class COCOeval:
         ious = maskUtils.iou(d,g,iscrowd)
         return ious
 
-    def computeOks(self, imgId, catId):
+    def computeOks(self, imgId, catId, flag=False):
         p = self.params
         # dimention here should be Nxm
         gts = self._gts[imgId, catId]
         dts = self._dts[imgId, catId]
+        if flag:
+            for gt in gts:
+                gt['num_keypoints'] = 12
+                gt['keypoints'] = gt['keypoints'][5*3:]
+                # tmp = gt['keypoints'][5*3:11*3]
+                # tmp.extend(gt['keypoints'][13*3:])
+                # gt['keypoints'] = tmp
+            for dt in dts:
+                dt['num_keypoints'] = 12
+                dt['keypoints'] = dt['keypoints'][5*3:]
+                # tmp = dt['keypoints'][5*3:11*3]
+                # tmp.extend(dt['keypoints'][13*3:])
+                # dt['keypoints'] = tmp
         inds = np.argsort([-d['score'] for d in dts], kind='mergesort')
         dts = [dts[i] for i in inds]
         if len(dts) > p.maxDets[-1]:
@@ -203,6 +216,9 @@ class COCOeval:
             return []
         ious = np.zeros((len(dts), len(gts)))
         sigmas = p.kpt_oks_sigmas
+        if flag:
+            sigmas = sigmas[5:]
+            # sigmas = np.concatenate((sigmas[5:11],sigmas[13:]))
         vars = (sigmas * 2)**2
         k = len(sigmas)
         # compute oks between each detection and ground truth object
@@ -261,10 +277,14 @@ class COCOeval:
         iscrowd = [int(o['iscrowd']) for o in gt]
         # load computed ious
         ious = self.ious[imgId, catId][:, gtind] if len(self.ious[imgId, catId]) > 0 else self.ious[imgId, catId]
-
+        # print("ious", ious)
+        # exit()
         T = len(p.iouThrs)
         G = len(gt)
         D = len(dt)
+        # print("T", T)
+        # print("G", G)
+        # print("D", D)
         gtm  = np.zeros((T,G))
         dtm  = np.zeros((T,D))
         gtIg = np.array([g['_ignore'] for g in gt])
@@ -289,16 +309,19 @@ class COCOeval:
                         iou=ious[dind,gind]
                         m=gind
                     # if match made store id of match for both dt and gt
+                    """Problem! m always be -1"""
                     if m ==-1:
                         continue
                     dtIg[tind,dind] = gtIg[m]
                     dtm[tind,dind]  = gt[m]['id']
                     gtm[tind,m]     = d['id']
+        # print("gtm", gtm)
+        # print("dtm", dtm)
         # set unmatched detections outside of area range to ignore
         a = np.array([d['area']<aRng[0] or d['area']>aRng[1] for d in dt]).reshape((1, len(dt)))
         dtIg = np.logical_or(dtIg, np.logical_and(dtm==0, np.repeat(a,T,0)))
         # store results for given image and category
-        return {
+        res = {
                 'image_id':     imgId,
                 'category_id':  catId,
                 'aRng':         aRng,
@@ -311,6 +334,9 @@ class COCOeval:
                 'gtIgnore':     gtIg,
                 'dtIgnore':     dtIg,
             }
+        # print("Evaluate single image result", res)
+        # exit()
+        return res
 
     def accumulate(self, p = None):
         '''
@@ -357,6 +383,7 @@ class COCOeval:
                 for m, maxDet in enumerate(m_list):
                     E = [self.evalImgs[Nk + Na + i] for i in i_list]
                     E = [e for e in E if not e is None]
+                    # print("!!!E:", E)
                     if len(E) == 0:
                         continue
                     dtScores = np.concatenate([e['dtScores'][0:maxDet] for e in E])
@@ -367,6 +394,7 @@ class COCOeval:
                     dtScoresSorted = dtScores[inds]
 
                     dtm  = np.concatenate([e['dtMatches'][:,0:maxDet] for e in E], axis=1)[:,inds]
+                    # print("!!!dtm:", dtm)
                     dtIg = np.concatenate([e['dtIgnore'][:,0:maxDet]  for e in E], axis=1)[:,inds]
                     gtIg = np.concatenate([e['gtIgnore'] for e in E])
                     npig = np.count_nonzero(gtIg==0 )
@@ -417,6 +445,7 @@ class COCOeval:
             'scores': scores,
         }
         toc = time.time()
+        # print("!!!cocoeval.eval", self.eval)
         print('DONE (t={:0.2f}s).'.format( toc-tic))
 
     def summarize(self):
@@ -437,6 +466,7 @@ class COCOeval:
             if ap == 1:
                 # dimension of precision: [TxRxKxAxM]
                 s = self.eval['precision']
+                # print("self.eval['precision']",s)
                 # IoU
                 if iouThr is not None:
                     t = np.where(iouThr == p.iouThrs)[0]
